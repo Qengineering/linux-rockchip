@@ -432,7 +432,15 @@ static int system_heap_create(void)
 	sys_heap = dma_heap_add(&exp_info);
 	if (IS_ERR(sys_heap))
 		return PTR_ERR(sys_heap);
-
+  #ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
+  /* create a twin heap to allocate <4 GB via GFP_DMA32 */
+    exp_info.name = "system-dma32";
+    exp_info.ops = &system_heap_ops;
+    exp_info.priv = (void *)(unsigned long)(GFP_KERNEL | GFP_DMA32);
+    heap = dma_heap_add(&exp_info);
+    if (IS_ERR(heap))
+      return PTR_ERR(heap);
+#endif
 	return 0;
 }
 module_init(system_heap_create);
