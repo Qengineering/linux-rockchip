@@ -437,7 +437,7 @@ static int system_heap_create(void)
     exp_info.name = "system-dma32";
     exp_info.ops = &system_heap_ops;
     exp_info.priv = (void *)(unsigned long)(GFP_KERNEL | GFP_DMA32);
-    heap = dma_heap_add(&exp_info);
+    sys_heap = dma_heap_add(&exp_info);
     if (IS_ERR(heap))
       return PTR_ERR(heap);
 #endif
