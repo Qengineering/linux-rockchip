@@ -438,8 +438,8 @@ static int system_heap_create(void)
     exp_info.ops = &system_heap_ops;
     exp_info.priv = (void *)(unsigned long)(GFP_KERNEL | GFP_DMA32);
     sys_heap = dma_heap_add(&exp_info);
-    if (IS_ERR(heap))
-      return PTR_ERR(heap);
+    if (IS_ERR(sys_heap))
+      return PTR_ERR(sys_heap);
 #endif
 	return 0;
 }
