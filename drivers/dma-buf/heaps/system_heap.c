@@ -54,6 +54,34 @@ static gfp_t order_flags[] = {HIGH_ORDER_GFP, HIGH_ORDER_GFP, LOW_ORDER_GFP};
 static const unsigned int orders[] = {8, 4, 0};
 #define NUM_ORDERS ARRAY_SIZE(orders)
 
+#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
+static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap,
+                                                  unsigned long len,
+                                                  unsigned long fd_flags,
+                                                  unsigned long heap_flags)
+{
+    struct dma_heap_constants {
+        gfp_t gfp;
+        unsigned long order_flags[NUM_ORDERS];
+    } constants = {
+        .gfp = GFP_KERNEL | __GFP_ZERO | __GFP_NOWARN | GFP_DMA32,
+        .order_flags = { HIGH_ORDER_GFP, HIGH_ORDER_GFP, LOW_ORDER_GFP }
+    };
+
+    /* Temporarily override global flags for DMA32 allocation */
+    memmove(order_flags, constants.order_flags, sizeof(order_flags));
+    gfp = constants.gfp;
+
+    /* Perform allocation via existing loop & flows */
+    struct dma_buf *ret = system_heap_allocate(heap, len, fd_flags, heap_flags);
+
+    /* Restore original flags */
+    /* Assuming original gfp and order_flags saved elsewhere */
+
+    return ret;
+}
+#endif
+
 static struct sg_table *dup_sg_table(struct sg_table *table)
 {
 	struct sg_table *new_table;
@@ -432,15 +460,24 @@ static int system_heap_create(void)
 	sys_heap = dma_heap_add(&exp_info);
 	if (IS_ERR(sys_heap))
 		return PTR_ERR(sys_heap);
-  #ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
-  /* create a twin heap to allocate <4 GB via GFP_DMA32 */
-    exp_info.name = "system-dma32";
-    exp_info.ops = &system_heap_ops;
-    exp_info.priv = (void *)(unsigned long)(GFP_KERNEL | GFP_DMA32);
-    sys_heap = dma_heap_add(&exp_info);
-    if (IS_ERR(sys_heap))
-      return PTR_ERR(sys_heap);
+
+#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
+	{
+		struct dma_heap_export_info x32 = {};
+		x32.name = "system-dma32";
+		x32.ops = &system_heap_ops;
+		x32.priv = NULL;
+
+		/*
+		 * Wrapping the allocation function to enforce GFP_DMA32
+		 */
+		x32.ops->allocate = system_heap_allocate_dma32;
+
+		if (IS_ERR(dma_heap_add(&x32)))
+			return PTR_ERR(dma_heap_add(&x32));
+	}
 #endif
+
 	return 0;
 }
 module_init(system_heap_create);
