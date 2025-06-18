@@ -25,7 +25,8 @@
 static struct dma_heap *dma32_heap;
 static struct dma_heap *sys_heap;
 
-static struct dma_buf *system_dma32_heap_allocate(struct dma_heap *heap, unsigned long len,
+#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
+static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap, unsigned long len,
                                                   unsigned long fd_flags, unsigned long heap_flags)
 {
     struct dma_heap_attachment *attachment;
@@ -43,6 +44,7 @@ static struct dma_buf *system_dma32_heap_allocate(struct dma_heap *heap, unsigne
 
     // Set up dma_buf and return it...
 }
+#endif
 
 struct system_heap_buffer {
 	struct dma_heap *heap;
@@ -453,7 +455,7 @@ static int system_heap_create(void)
 	sys_heap = dma_heap_add(&exp_info);
 	if (IS_ERR(sys_heap))
 		return PTR_ERR(sys_heap);
-
+#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
 	{
 		struct dma_heap_export_info x32 = {};
 		x32.name = "system-dma32";
@@ -468,7 +470,7 @@ static int system_heap_create(void)
 		if (IS_ERR(dma_heap_add(&x32)))
 			return PTR_ERR(dma_heap_add(&x32));
 	}
-
+#endif
 	return 0;
 }
 module_init(system_heap_create);
