@@ -29,10 +29,10 @@ static struct dma_heap *sys_heap;
 static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap, unsigned long len,
                                                   unsigned long fd_flags, unsigned long heap_flags)
 {
-    struct dma_heap_attachment *attachment;
-    struct sg_table *table;
+//    struct dma_heap_attachment *attachment;
+//    struct sg_table *table;
     struct page *page;
-    struct dma_buf *dmabuf;
+//    struct dma_buf *dmabuf;
     gfp_t gfp = GFP_KERNEL | __GFP_ZERO | GFP_DMA32;
 
     // Align length
@@ -457,18 +457,19 @@ static int system_heap_create(void)
 		return PTR_ERR(sys_heap);
 #ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
 	{
-		struct dma_heap_export_info x32 = {};
-		x32.name = "system-dma32";
-		x32.ops = &system_heap_ops;
-		x32.priv = NULL;
+		static const struct dma_heap_ops dma32_heap_ops = {
+			.allocate = system_heap_allocate_dma32,
+		};
 
-		/*
-		 * Wrapping the allocation function to enforce GFP_DMA32
-		 */
-		x32.ops->allocate = system_heap_allocate_dma32;
+		struct dma_heap_export_info x32 = {
+			.name = "system-dma32",
+			.ops = &dma32_heap_ops,
+			.priv = NULL,
+		};
 
-		if (IS_ERR(dma_heap_add(&x32)))
-			return PTR_ERR(dma_heap_add(&x32));
+		dma32_heap = dma_heap_add(&x32);
+		if (IS_ERR(dma32_heap))
+			return PTR_ERR(dma32_heap);
 	}
 #endif
 	return 0;
