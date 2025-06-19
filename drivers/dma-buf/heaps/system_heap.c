@@ -26,23 +26,92 @@ static struct dma_heap *dma32_heap;
 static struct dma_heap *sys_heap;
 
 #ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
-static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap, unsigned long len,
-                                                  unsigned long fd_flags, unsigned long heap_flags)
+static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap,
+                                                  unsigned long len,
+                                                  unsigned long fd_flags,
+                                                  unsigned long heap_flags)
 {
-//    struct dma_heap_attachment *attachment;
-//    struct sg_table *table;
-    struct page *page;
-//    struct dma_buf *dmabuf;
-    gfp_t gfp = GFP_KERNEL | __GFP_ZERO | GFP_DMA32;
+    struct system_heap_buffer *buffer;
+    DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
+    unsigned long size_remaining = len;
+    unsigned int max_order = orders[0];
+    struct dma_buf *dmabuf;
+    struct sg_table *table;
+    struct scatterlist *sg;
+    struct list_head pages;
+    struct page *page, *tmp_page;
+    int i, ret = -ENOMEM;
 
-    // Align length
-    len = PAGE_ALIGN(len);
-
-    page = alloc_pages(gfp, get_order(len));
-    if (!page)
+    buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
+    if (!buffer)
         return ERR_PTR(-ENOMEM);
 
-    // Set up dma_buf and return it...
+    INIT_LIST_HEAD(&buffer->attachments);
+    mutex_init(&buffer->lock);
+    buffer->heap = heap;
+    buffer->len = len;
+
+    INIT_LIST_HEAD(&pages);
+    i = 0;
+    while (size_remaining > 0) {
+        if (fatal_signal_pending(current)) {
+            ret = -EINTR;
+            goto free_buffer;
+        }
+
+        // Force DMA32 zone
+        page = alloc_largest_available(size_remaining, max_order);
+        if (!page) {
+            // fallback: try basic DMA32 alloc
+            page = alloc_pages(GFP_DMA32 | __GFP_ZERO, get_order(size_remaining));
+        }
+
+        if (!page)
+            goto free_buffer;
+
+        list_add_tail(&page->lru, &pages);
+        size_remaining -= page_size(page);
+        max_order = compound_order(page);
+        i++;
+    }
+
+    table = &buffer->sg_table;
+    if (sg_alloc_table(table, i, GFP_KERNEL))
+        goto free_buffer;
+
+    sg = table->sgl;
+    list_for_each_entry_safe(page, tmp_page, &pages, lru) {
+        sg_set_page(sg, page, page_size(page), 0);
+        sg = sg_next(sg);
+        list_del(&page->lru);
+    }
+
+    exp_info.exp_name = dma_heap_get_name(heap);
+    exp_info.ops = &system_heap_buf_ops;
+    exp_info.size = buffer->len;
+    exp_info.flags = fd_flags;
+    exp_info.priv = buffer;
+
+    dmabuf = dma_buf_export(&exp_info);
+    if (IS_ERR(dmabuf)) {
+        ret = PTR_ERR(dmabuf);
+        goto free_pages;
+    }
+
+    return dmabuf;
+
+free_pages:
+    for_each_sgtable_sg(table, sg, i) {
+        struct page *p = sg_page(sg);
+        __free_pages(p, compound_order(p));
+    }
+    sg_free_table(table);
+free_buffer:
+    list_for_each_entry_safe(page, tmp_page, &pages, lru)
+        __free_pages(page, compound_order(page));
+    kfree(buffer);
+
+    return ERR_PTR(ret);
 }
 #endif
 
