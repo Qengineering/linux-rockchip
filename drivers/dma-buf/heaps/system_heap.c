@@ -21,8 +21,6 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
-// Forward declaration
-static struct dma_heap *dma32_heap;
 static struct dma_heap *sys_heap;
 
 struct system_heap_buffer {
@@ -419,96 +417,6 @@ free_buffer:
 	return ERR_PTR(ret);
 }
 
-#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
-static struct dma_buf *system_heap_allocate_dma32(struct dma_heap *heap,
-                                                  unsigned long len,
-                                                  unsigned long fd_flags,
-                                                  unsigned long heap_flags)
-{
-    struct system_heap_buffer *buffer;
-    DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
-    unsigned long size_remaining = len;
-    unsigned int max_order = orders[0];
-    struct dma_buf *dmabuf;
-    struct sg_table *table;
-    struct scatterlist *sg;
-    struct list_head pages;
-    struct page *page, *tmp_page;
-    int i, ret = -ENOMEM;
-
-    buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
-    if (!buffer)
-        return ERR_PTR(-ENOMEM);
-
-    INIT_LIST_HEAD(&buffer->attachments);
-    mutex_init(&buffer->lock);
-    buffer->heap = heap;
-    buffer->len = len;
-
-    INIT_LIST_HEAD(&pages);
-    i = 0;
-    while (size_remaining > 0) {
-        if (fatal_signal_pending(current)) {
-            ret = -EINTR;
-            goto free_buffer;
-        }
-
-        // Force DMA32 zone
-        page = alloc_largest_available(size_remaining, max_order);
-        if (!page) {
-            // fallback: try basic DMA32 alloc
-            page = alloc_pages(GFP_DMA32 | __GFP_ZERO, get_order(size_remaining));
-        }
-
-        if (!page)
-            goto free_buffer;
-
-        list_add_tail(&page->lru, &pages);
-        size_remaining -= page_size(page);
-        max_order = compound_order(page);
-        i++;
-    }
-
-    table = &buffer->sg_table;
-    if (sg_alloc_table(table, i, GFP_KERNEL))
-        goto free_buffer;
-
-    sg = table->sgl;
-    list_for_each_entry_safe(page, tmp_page, &pages, lru) {
-        sg_set_page(sg, page, page_size(page), 0);
-        sg = sg_next(sg);
-        list_del(&page->lru);
-    }
-
-    exp_info.exp_name = dma_heap_get_name(heap);
-    exp_info.ops = &system_heap_buf_ops;
-    exp_info.size = buffer->len;
-    exp_info.flags = fd_flags;
-    exp_info.priv = buffer;
-
-    dmabuf = dma_buf_export(&exp_info);
-    if (IS_ERR(dmabuf)) {
-        ret = PTR_ERR(dmabuf);
-        goto free_pages;
-    }
-
-    return dmabuf;
-
-free_pages:
-    for_each_sgtable_sg(table, sg, i) {
-        struct page *p = sg_page(sg);
-        __free_pages(p, compound_order(p));
-    }
-    sg_free_table(table);
-free_buffer:
-    list_for_each_entry_safe(page, tmp_page, &pages, lru)
-        __free_pages(page, compound_order(page));
-    kfree(buffer);
-
-    return ERR_PTR(ret);
-}
-#endif
-
 static const struct dma_heap_ops system_heap_ops = {
 	.allocate = system_heap_allocate,
 };
@@ -524,23 +432,7 @@ static int system_heap_create(void)
 	sys_heap = dma_heap_add(&exp_info);
 	if (IS_ERR(sys_heap))
 		return PTR_ERR(sys_heap);
-#ifdef CONFIG_DMABUF_HEAPS_SYSTEM_DMA32
-	{
-		static const struct dma_heap_ops dma32_heap_ops = {
-			.allocate = system_heap_allocate_dma32,
-		};
 
-		struct dma_heap_export_info x32 = {
-			.name = "system-dma32",
-			.ops = &dma32_heap_ops,
-			.priv = NULL,
-		};
-
-		dma32_heap = dma_heap_add(&x32);
-		if (IS_ERR(dma32_heap))
-			return PTR_ERR(dma32_heap);
-	}
-#endif
 	return 0;
 }
 module_init(system_heap_create);
